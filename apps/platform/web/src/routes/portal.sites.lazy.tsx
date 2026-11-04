@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, type ReactElement } from 'react';
 import { createLazyFileRoute } from '@tanstack/react-router';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Plus, Globe, Search, X, RefreshCw } from 'lucide-react';
+import { Plus, Globe, Search, X, RefreshCw, UserCheck } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
@@ -23,6 +24,16 @@ const PAGE_SIZE = 6;
 // The batch stats endpoint caps a request at 100 sites.
 const MAX_BATCH_SITES = 100;
 const SORT_STORAGE_KEY = 'traks.sites.sort';
+const HUMAN_STORAGE_KEY = 'traks.sites.human';
+
+// Humans only is the default; only an explicit "off" is remembered.
+function storedHumanOnly(): boolean {
+  try {
+    return localStorage.getItem(HUMAN_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
 
 function storedSort(): SiteSort {
   try {
@@ -44,6 +55,7 @@ function SitesPage(): ReactElement {
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sort, setSort] = useState<SiteSort>(storedSort);
+  const [humanOnly, setHumanOnly] = useState<boolean>(storedHumanOnly);
 
   const {
     data: sitesData,
@@ -96,8 +108,8 @@ function SitesPage(): ReactElement {
     isLoading: batchStatsLoading,
     isPlaceholderData,
   } = useQuery({
-    queryKey: ['stats', 'batch', 'today', statsSiteIdsKey],
-    queryFn: () => api.getBatchStats('today', statsSiteIds),
+    queryKey: ['stats', 'batch', 'today', statsSiteIdsKey, humanOnly],
+    queryFn: () => api.getBatchStats('today', statsSiteIds, humanOnly),
     enabled: statsSiteIds.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -131,6 +143,16 @@ function SitesPage(): ReactElement {
     renderedIdsRef.current.clear();
     setSearch(value);
     setVisibleCount(PAGE_SIZE);
+  };
+
+  const handleHumanOnlyChange = (on: boolean): void => {
+    setHumanOnly(on);
+    try {
+      if (on) localStorage.removeItem(HUMAN_STORAGE_KEY);
+      else localStorage.setItem(HUMAN_STORAGE_KEY, '0');
+    } catch {
+      /* storage blocked: the choice lasts for this visit only */
+    }
   };
 
   const handleSortChange = (value: SiteSort): void => {
@@ -183,6 +205,28 @@ function SitesPage(): ReactElement {
                 </button>
               )}
             </div>
+          )}
+          {!isLoading && allSites.length > 0 && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={humanOnly}
+              onClick={() => handleHumanOnlyChange(!humanOnly)}
+              title={
+                humanOnly
+                  ? 'Counting only visits with real interaction'
+                  : 'Counting all visits not recognised as bots'
+              }
+              className={cn(
+                'inline-flex h-10 items-center gap-1.5 rounded-full border px-4 text-[14px] font-medium transition-colors cursor-pointer',
+                humanOnly
+                  ? 'border-[#3D3B4F] bg-[#3D3B4F] text-white'
+                  : 'border-[#E6E4DE] bg-white text-[#3D3B4F] hover:bg-[#F2F1ED]'
+              )}
+            >
+              <UserCheck className="h-4 w-4" strokeWidth={1.8} />
+              Humans only
+            </button>
           )}
           {!isLoading && allSites.length > 1 && (
             <SiteSortMenu value={sort} onChange={handleSortChange} />

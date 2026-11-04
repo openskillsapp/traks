@@ -29,7 +29,7 @@ export type LiveDimension =
  * `props`: custom properties every matching row must carry, as the canonical
  * JSON object from propsFilterValue() (matched against event_meta).
  */
-export type LiveFilterKey = LiveDimension | 'props';
+export type LiveFilterKey = LiveDimension | 'props' | 'human';
 export type LiveFilters = Partial<Record<LiveFilterKey, string>>;
 
 /** Most properties one filter may combine. */
@@ -76,7 +76,8 @@ export type FilterParam =
   | 'browser'
   | 'os'
   | 'device'
-  | 'props';
+  | 'props'
+  | 'human';
 
 /** Filter parameter -> canonical column dimension. */
 export const FILTER_PARAM_TO_DIMENSION: Record<FilterParam, LiveFilterKey> = {
@@ -92,6 +93,7 @@ export const FILTER_PARAM_TO_DIMENSION: Record<FilterParam, LiveFilterKey> = {
   os: 'os',
   device: 'device_type',
   props: 'props',
+  human: 'human',
 };
 
 /** Map dashboard filter params to LiveFilters; undefined when nothing is set. */
@@ -105,6 +107,11 @@ export function toLiveFilters(
   ][]) {
     const value = params[param];
     if (value === undefined || value === '') continue;
+    // Human-only: visits that sent an interaction ping. '1' is the only value.
+    if (dimension === 'human') {
+      if (value === '1') filters.human = '1';
+      continue;
+    }
     if (dimension === 'props') {
       // Malformed props filters are dropped, never matched literally.
       const pairs = parsePropsFilter(value);

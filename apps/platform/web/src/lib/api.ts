@@ -18,6 +18,8 @@ export interface AnalyticsFilters {
   device?: string;
   /** Custom properties every row must carry: canonical JSON from propsFilterValue(). */
   props?: string;
+  /** '1': only visits with real input (pointer, touch, keys, wheel). */
+  human?: '1';
 }
 
 // Same-origin: /api/* is served by the API worker via a zone route in prod
@@ -419,11 +421,12 @@ export const api = {
   },
 
   // Analytics
-  async getBatchStats(period: PeriodParam, siteIds?: string[]): Promise<any> {
-    const query: { period: PeriodParam; siteIds?: string } = { period };
+  async getBatchStats(period: PeriodParam, siteIds?: string[], humanOnly = false): Promise<any> {
+    const query: { period: PeriodParam; siteIds?: string; human?: '1' } = { period };
     if (siteIds && siteIds.length > 0) {
       query.siteIds = siteIds.join(',');
     }
+    if (humanOnly) query.human = '1';
     const res = await client.api.analytics.batch.stats.$get({ query });
     await assertOk(res);
     return res.json();

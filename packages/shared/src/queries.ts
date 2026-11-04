@@ -1,4 +1,4 @@
-import { AUTO_EVENTS, isPreset, parseCustomPeriod } from './constants';
+import { AUTO_EVENTS, HUMAN_ENGAGEMENT, isPreset, parseCustomPeriod } from './constants';
 import type { PeriodParam } from './constants';
 import { parsePropsFilter, type LiveDimension, type LiveFilters } from './live';
 import { AI_HOSTNAME_IN, aiSourceCaseSql } from './ai-sources';
@@ -582,8 +582,35 @@ function propsFilterSql(
   return ` AND ${noOtherValue} AND (${carriesAll} OR session_id IN (${sessions}))`;
 }
 
+/** Human-only filter: rows from visits that sent an interaction ping
+ *  (HUMAN_ENGAGEMENT) within the queried range. `siteKeys` is one site, or
+ *  several for the batch query. */
+function humanSessionsSql(siteKeys: string[], range: { from: string; to: string }): string {
+  return (
+    ` AND session_id IN (SELECT session_id FROM ${EVENTS_TABLE}` +
+    ` WHERE site_id IN (${siteKeys.map(k => `'${esc(k)}'`).join(', ')})` +
+    ` AND ts >= TIMESTAMP '${esc(range.from)}'` +
+    ` AND ts < TIMESTAMP '${esc(range.to)}'` +
+    ingestBounds(range.from, range.to) +
+    ` AND event_type = 'engagement' AND event_name = '${esc(HUMAN_ENGAGEMENT)}'` +
+    ` AND session_id != '')`
+  );
+}
+
+/** The human filter for queries that apply the other filters per visit
+ *  (window functions over session_id) rather than in their WHERE clause. */
+function humanWhereSql(
+  filters: LiveFilters | undefined,
+  siteKey: string,
+  range: { from: string; to: string }
+): string {
+  return filters?.human === '1' ? humanSessionsSql([siteKey], range) : '';
+}
+
 /** Exact-match dashboard filters as additional AND clauses ('' if none).
- *  The page filter alone also understands the '/section/*' prefix syntax. */
+ *  The page filter alone also understands the '/section/*' prefix syntax.
+ *  Without a scope the human filter is skipped: those callers add it to their
+ *  WHERE clause with humanWhereSql. */
 function filterClause(
   filters?: LiveFilters,
   scope?: { siteKey: string; range: { from: string; to: string } }
@@ -594,6 +621,10 @@ function filterClause(
     if (key === 'props' && typeof value === 'string') {
       const pairs = parsePropsFilter(value);
       if (pairs) sql += propsFilterSql(pairs, scope);
+      continue;
+    }
+    if (key === 'human') {
+      if (value === '1' && scope) sql += humanSessionsSql([scope.siteKey], scope.range);
       continue;
     }
     const col = FILTER_COLUMNS[key as LiveDimension];
@@ -902,7 +933,7 @@ export function buildFunnelQuery(
  * query replaces a query per site; the API groups sites by timezone so every
  * site in a call shares the same resolved period window.
  */
-export function buildBatchStatsQuery(siteKeys: string[], range: PeriodRange) {
+export function buildBatchStatsQuery(siteKeys: string[], range: PeriodRange, human = false) {
   const keys = siteKeys.map(k => `'${esc(k)}'`).join(', ');
   return (table: string) => `
     SELECT
@@ -914,7 +945,9 @@ export function buildBatchStatsQuery(siteKeys: string[], range: PeriodRange) {
     WHERE site_id IN (${keys})
       AND event_type = 'pageview'
       AND ts >= TIMESTAMP '${esc(range.from)}'
-      AND ts < TIMESTAMP '${esc(range.to)}'${ingestBounds(range.from, range.to)}
+      AND ts < TIMESTAMP '${esc(range.to)}'${ingestBounds(range.from, range.to)}${
+        human ? humanSessionsSql(siteKeys, range) : ''
+      }
     GROUP BY site_id
   `;
 }
@@ -1022,7 +1055,7 @@ export function buildPathNeighborsQuery(
         LAG(pathname) OVER (PARTITION BY session_id ORDER BY ts) AS prev_path,
         ${keep} AS keep
       FROM ${table}
-      WHERE ${whereSiteAndRange(siteKey, range, 'pageview')}
+      WHERE ${whereSiteAndRange(siteKey, range, 'pageview')}${humanWhereSql(filters, siteKey, range)}
         AND session_id != ''
     )
     SELECT
@@ -1064,7 +1097,7 @@ export function buildPathTotalsQuery(
         LAG(pathname) OVER (PARTITION BY session_id ORDER BY ts) AS prev_path,
         ${keep} AS keep
       FROM ${table}
-      WHERE ${whereSiteAndRange(siteKey, range, 'pageview')}
+      WHERE ${whereSiteAndRange(siteKey, range, 'pageview')}${humanWhereSql(filters, siteKey, range)}
         AND session_id != ''
     )
     SELECT
@@ -1122,7 +1155,7 @@ export function buildAttributionQuery(
         ${converted} AS converted,
         ${keep} AS keep
       FROM ${table}
-      WHERE ${whereSiteAndRange(siteKey, range, null)}
+      WHERE ${whereSiteAndRange(siteKey, range, null)}${humanWhereSql(filters, siteKey, range)}
         AND event_type IN ('pageview', 'event')
         AND session_id != ''
     )

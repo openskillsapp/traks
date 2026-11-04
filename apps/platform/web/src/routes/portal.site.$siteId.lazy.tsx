@@ -12,6 +12,7 @@ import {
   Trash2,
   BookmarkPlus,
   Globe,
+  UserCheck,
 } from 'lucide-react';
 import type {
   PeriodParam,
@@ -823,8 +824,8 @@ function SegmentsMenu({
     onError: (err: Error) => setError(err.message),
   });
 
-  const activeEntries = Object.entries(filters).filter(([, v]) => v) as [
-    keyof AnalyticsFilters,
+  const activeEntries = Object.entries(filters).filter(([k, v]) => v && k !== 'human') as [
+    keyof typeof FILTER_LABELS,
     string,
   ][];
 
@@ -1013,16 +1014,35 @@ export function SiteDashboard({
   const period: PeriodParam =
     shared && searchPeriod && !isPreset(searchPeriod) ? 'today' : searchPeriod || 'today';
 
-  const filters: AnalyticsFilters = {};
-  for (const key of Object.keys(FILTER_LABELS) as (keyof AnalyticsFilters)[]) {
+  // Click-to-filter chips (what the viewer chose), as opposed to `filters`
+  // below, which is what every panel query sends.
+  const chipFilters: AnalyticsFilters = {};
+  for (const key of Object.keys(FILTER_LABELS) as (keyof typeof FILTER_LABELS)[]) {
     const value = (search as Record<string, unknown>)[key];
-    if (typeof value === 'string' && value) filters[key] = value;
+    if (typeof value === 'string' && value) chipFilters[key] = value;
   }
   // The props filter is an object in the URL; the API takes its JSON text.
   const propsFilter = propsSearch(search.props);
-  if (propsFilter) filters.props = JSON.stringify(propsFilter);
+  if (propsFilter) chipFilters.props = JSON.stringify(propsFilter);
+  // Humans only (default): count visits with real input; ?human=0 shows all.
+  const humanOnly = search.human !== '0';
+  const filters: AnalyticsFilters = humanOnly ? { ...chipFilters, human: '1' } : chipFilters;
   const filterKey = JSON.stringify(filters);
-  const hasFilters = Object.keys(filters).length > 0;
+  const hasFilters = Object.keys(chipFilters).length > 0;
+  // The /stats/all bundle has no filtered form, humans-only included.
+  const filtered = hasFilters || humanOnly;
+
+  const setHumanOnly = useCallback(
+    (on: boolean) => {
+      navigate({
+        to: basePath,
+        params: { siteId },
+        search: prev => ({ ...prev, human: on ? undefined : '0' }),
+        replace: true,
+      });
+    },
+    [navigate, siteId, basePath]
+  );
 
   const setPeriod = useCallback(
     (p: PeriodParam) => {
@@ -1220,7 +1240,7 @@ export function SiteDashboard({
   // server round-trip (and, on 'today', a single fan-out to the live store) -
   // seven browser requests collapsed into one. It has no filtered variant, so
   // the moment a filter chip is active we fall back to per-panel requests.
-  const useBootstrap = !hasFilters;
+  const useBootstrap = !filtered;
   const bootstrapQ = useQuery({
     queryKey: ['site-analytics', siteId, 'all', period],
     queryFn: async () => statsApi.getAllStats(siteId, period),
@@ -1250,7 +1270,7 @@ export function SiteDashboard({
     // Same hazard on a period switch: keepPreviousData keeps the OLD period's
     // bundle in `data` while the new one loads, so seeding placeholder data
     // would stamp last period's numbers onto this period's keys as fresh.
-    if (!bootstrapData || hasFilters || bootstrapQ.isPlaceholderData) return;
+    if (!bootstrapData || filtered || bootstrapQ.isPlaceholderData) return;
     const seed = (key: readonly unknown[], value: unknown): void => {
       queryClient.setQueryData(['site-analytics', siteId, ...key, period, filterKey], {
         data: value,
@@ -1269,7 +1289,7 @@ export function SiteDashboard({
     siteId,
     period,
     filterKey,
-    hasFilters,
+    filtered,
     bootstrapQ.isPlaceholderData,
   ]);
 
@@ -1294,13 +1314,13 @@ export function SiteDashboard({
   // per site per day. Runs after the bundle settles so it never competes
   // with the hot path, and only unfiltered (the bundle has no filtered form).
   useEffect(() => {
-    if (period !== 'today' || hasFilters || !bootstrapSettled) return;
+    if (period !== 'today' || filtered || !bootstrapSettled) return;
     void queryClient.prefetchQuery({
       queryKey: ['site-analytics', siteId, 'all', 'yesterday'],
       queryFn: async () => statsApi.getAllStats(siteId, 'yesterday'),
       staleTime: getStaleTime('yesterday'),
     });
-  }, [queryClient, siteId, period, hasFilters, bootstrapSettled, statsApi]);
+  }, [queryClient, siteId, period, filtered, bootstrapSettled, statsApi]);
 
   // Per-tile parallel queries - each tile renders as its own request resolves.
   // Tabbed panels pass `enabled` so only the active tab's query runs (each
@@ -1780,7 +1800,7 @@ export function SiteDashboard({
                   </button>
                   <SegmentsMenu
                     siteId={siteId}
-                    filters={filters}
+                    filters={chipFilters}
                     hasFilters={hasFilters}
                     onApply={applySegment}
                   />
@@ -1847,15 +1867,40 @@ export function SiteDashboard({
             onOpenChange={setLiveOpen}
             siteId={siteId}
             domain={site?.domain}
-            dashboardFilters={filters}
+            dashboardFilters={chipFilters}
             onApply={applyLiveFilters}
           />
         )}
 
+        {/* Humans-only toggle: on by default, so headline numbers count
+            visits with real input (pointer, touch, keys, wheel) only. */}
+        <div className="mb-3 flex items-center gap-2 text-[13px] text-[#6B6560]">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={humanOnly}
+            onClick={() => setHumanOnly(!humanOnly)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition-colors cursor-pointer',
+              humanOnly
+                ? 'border-[#3D3B4F] bg-[#3D3B4F] text-white'
+                : 'border-[#E6E4DE] bg-white text-[#3D3B4F] hover:bg-[#F2F1ED]'
+            )}
+          >
+            <UserCheck className="h-3.5 w-3.5" strokeWidth={2} />
+            Humans only
+          </button>
+          <span className="hidden sm:inline">
+            {humanOnly
+              ? 'Visits with real interaction (pointer, touch, keys, scrolling). Recorded since this feature was installed.'
+              : 'All visits not recognised as bots, including scrapers that look like people.'}
+          </span>
+        </div>
+
         {/* Active filters */}
         {hasFilters && (
           <FilterChips
-            filters={filters}
+            filters={chipFilters}
             onRemove={removeFilter}
             onRemoveProp={key => setPropFilter(key, null)}
             onClear={clearFilters}

@@ -21,6 +21,8 @@ export type SiteSearch = {
   /** Custom-property filter, kept as an object so the URL reads
    *  ?props={"spaceid":"a"} rather than an escaped JSON string. */
   props?: Record<string, string>;
+  /** '0' shows every visit; absent = humans only (visits with real input). */
+  human?: '0';
 };
 
 const FILTER_KEYS = [
@@ -57,6 +59,7 @@ export function validateSiteSearch(search: Record<string, unknown>): SiteSearch 
   }
   const props = propsSearch(search.props);
   if (props) out.props = props;
+  if (search.human === '0' || search.human === 0) out.human = '0';
   return out;
 }
 

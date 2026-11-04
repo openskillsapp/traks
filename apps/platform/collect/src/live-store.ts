@@ -29,6 +29,7 @@ import type {
 } from '@traks/shared';
 import {
   AUTO_EVENTS,
+  HUMAN_ENGAGEMENT,
   SCREEN_SIZE_CASE,
   AI_HOSTNAME_IN,
   aiSourceCaseSql,
@@ -334,6 +335,15 @@ export class SiteLiveStore extends DurableObject<unknown> {
         params.push(...carriesParams, ...carriesParams);
         continue;
       }
+      // Human-only: rows from visits that sent an interaction ping. SQLite
+      // runs the subquery once per statement, also inside CASE expressions.
+      if (key === 'human') {
+        if (value === '1') {
+          sql += ` AND session_id IN (SELECT session_id FROM events WHERE session_id != '' AND event_type = 'engagement' AND event_name = ?)`;
+          params.push(HUMAN_ENGAGEMENT);
+        }
+        continue;
+      }
       const col = DIMENSION_COLUMNS[key as LiveDimension];
       if (!col || typeof value !== 'string') continue;
       // The page filter alone also understands the '/section/*' prefix syntax.
@@ -549,6 +559,10 @@ export class SiteLiveStore extends DurableObject<unknown> {
       if (typeof value !== 'string' || value === '') continue;
       if (key === 'props') {
         if (parsePropsFilter(value)) out.props = value;
+        continue;
+      }
+      if (key === 'human') {
+        if (value === '1') out.human = '1';
         continue;
       }
       if (!(key in DIMENSION_COLUMNS)) continue;

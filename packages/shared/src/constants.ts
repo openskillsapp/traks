@@ -36,6 +36,14 @@ export const AUTO_EVENTS = {
   WEBMCP: 'WebMCP: Tool Call',
 } as const;
 
+/**
+ * event_name on an 'engagement' ping from a visit with real input (pointer,
+ * touch, key, scroll or wheel). Scrapers that run JS on rented residential
+ * connections load pages but almost never produce input, so "the visit sent
+ * one of these" is the human-only filter (`human=1`).
+ */
+export const HUMAN_ENGAGEMENT = 'Human: Interaction';
+
 export const PERIODS = ['today', 'yesterday', '7d', '30d', '90d', '6m', '1y', 'all'] as const;
 export type Period = (typeof PERIODS)[number];
 

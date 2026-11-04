@@ -152,20 +152,54 @@
     }
   }
 
-  function flushEngagement(path: string): void {
+  // Real input marks every later ping with HUMAN_ENGAGEMENT: browser-driving
+  // scrapers load pages and wait but almost never produce input, so this is
+  // the dashboard's human-only filter. No 'scroll': scripts scroll too (lazy
+  // loading); people scroll with a wheel/trackpad (wheel) or a finger
+  // (touchstart). isTrusted rejects events dispatched from page script.
+  const INPUT_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'];
+  let interacted = false;
+
+  function flushEngagement(path: string, keepTiming = false): void {
     pauseEngagement();
     const seconds = Math.round(engagedMs / 1000);
     engagedMs = 0;
+    if (keepTiming) engagedStart = Date.now();
     // Skip sub-second blips and absurd values (suspended laptops etc.)
     if (seconds < 1 || seconds > 4 * 3600) return;
-    sendRequest({
+    const payload: Record<string, unknown> = {
       t: 'engagement',
       s: siteKey,
       p: path,
       h: location.hostname,
       sid: getSessionId(),
       ev: seconds,
-    });
+    };
+    // Must equal HUMAN_ENGAGEMENT in @traks/shared (the tracker bundles nothing).
+    if (interacted) payload.en = 'Human: Interaction';
+    sendRequest(payload);
+  }
+
+  // The first input also flushes the time so far (timing keeps running), so
+  // a visitor still on the page counts as human now, not only after they
+  // leave. Visit duration is a sum of pings, so the split does not change it.
+  function onFirstInput(e: Event): void {
+    if (interacted || !e.isTrusted) return;
+    interacted = true;
+    for (const type of INPUT_EVENTS) removeEventListener(type, onFirstInput, true);
+    const elapsed = engagedMs + (engagedStart ? Date.now() - engagedStart : 0);
+    // Under a second in: wait for the 1s minimum so the ping is not dropped.
+    setTimeout(
+      function () {
+        if (document.visibilityState === 'visible' && lastPage && engagedStart) {
+          flushEngagement(lastPage, true);
+        }
+      },
+      Math.max(0, 1100 - elapsed)
+    );
+  }
+  for (const type of INPUT_EVENTS) {
+    addEventListener(type, onFirstInput, { capture: true, passive: true });
   }
 
   document.addEventListener('visibilitychange', function () {

@@ -4,7 +4,8 @@ import { parsePropsFilter } from '@traks/shared';
 import type { AnalyticsFilters } from '@/lib/api';
 import { countryName } from './CountryFlag';
 
-export const FILTER_LABELS: Record<keyof AnalyticsFilters, string> = {
+/** Click-to-filter keys. `human` is a separate toggle, never a chip. */
+export const FILTER_LABELS: Record<Exclude<keyof AnalyticsFilters, 'human'>, string> = {
   page: 'Page',
   source: 'Source',
   utmSource: 'UTM Source',
@@ -24,7 +25,7 @@ export function describeFilter(key: keyof AnalyticsFilters, value: string): stri
   if (key === 'props') {
     return (parsePropsFilter(value) ?? []).map(([k, v]) => `${k}: ${v}`).join(' · ');
   }
-  return `${FILTER_LABELS[key] ?? key}: ${key === 'country' ? countryName(value) : value}`;
+  return `${(FILTER_LABELS as Record<string, string>)[key] ?? key}: ${key === 'country' ? countryName(value) : value}`;
 }
 
 /** One chip: a filter key, or one property of the props filter. */
@@ -53,8 +54,8 @@ export function FilterChips({
   /** Show the clear action even with a single chip. */
   alwaysShowClear?: boolean;
 }): ReactElement | null {
-  const entries = Object.entries(filters).filter(([, v]) => v) as [
-    keyof AnalyticsFilters,
+  const entries = Object.entries(filters).filter(([k, v]) => v && k !== 'human') as [
+    keyof typeof FILTER_LABELS,
     string,
   ][];
   // The props filter shows as one chip per property ("spaceid: organizer-123").

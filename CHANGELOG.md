@@ -6,6 +6,10 @@ ships separately and is not listed here.
 
 ## Unreleased
 
+### Added
+
+- "Humans only" view, on by default on the dashboard and the Sites page. A visit counts only after the visitor interacts with the page (pointer, touch, keyboard or wheel), which filters out scrapers that run JavaScript but never touch anything. Switch it off to see every visit not recognised as a bot. Visits recorded before this update carry no interaction mark, so earlier periods look empty in this view.
+
 ## 0.1.48 - 2026-11-04
 
 ### Fixed

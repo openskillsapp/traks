@@ -385,6 +385,8 @@ const filterFields = {
   // Custom properties every row must carry, as a JSON object:
   // {"spaceid":"organizer-123","eventid":"event-456"}.
   props: z.string().max(2048).optional(),
+  // Human-only: '1' keeps visits that sent an interaction ping.
+  human: z.enum(['1']).optional(),
 };
 
 type FilterParams = { [K in keyof typeof filterFields]?: string };
@@ -402,6 +404,8 @@ const periodQuery = z.object({
 const batchQuery = z.object({
   period: periodParamSchema,
   siteIds: z.string().optional(),
+  // '1': count only visits that sent an interaction ping (the Sites page default).
+  human: z.enum(['1']).optional(),
 });
 const locationQuery = z.object({
   period: periodParamSchema,
@@ -698,7 +702,8 @@ const appWithBatch = app
   // Batch stats for all user's sites (used on sites list page)
   .get('/batch/stats', requireAuth, validate('query', batchQuery), async c => {
     const userId = c.get('userId')!;
-    const { period, siteIds: siteIdsParam } = c.req.valid('query');
+    const { period, siteIds: siteIdsParam, human } = c.req.valid('query');
+    const humanOnly = human === '1';
     const db = c.get('db')!;
     // Bounded: each id becomes a D1 bind parameter and (on 'today') a DO
     // subrequest, so an unbounded list blows D1's parameter ceiling and the
@@ -736,7 +741,11 @@ const appWithBatch = app
         await Promise.all(
           siteRecords.map(async ({ siteId, timezone }) => {
             const range = resolvePeriod('today', liveNow, timezone);
-            const t = await liveStore(c, siteId).totals(ms(range.from), ms(range.to));
+            const t = await liveStore(c, siteId).totals(
+              ms(range.from),
+              ms(range.to),
+              humanOnly ? { human: '1' } : undefined
+            );
             results[siteId] = {
               visitors: t.visitors,
               pageviews: t.pageviews,
@@ -773,7 +782,8 @@ const appWithBatch = app
             ttl,
             buildBatchStatsQuery(
               group.map(g => g.siteId),
-              range
+              range,
+              humanOnly
             )
           );
           const known = new Set(group.map(g => g.siteId));
