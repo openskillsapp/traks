@@ -1,71 +1,77 @@
 import type { ReactElement } from 'react';
 import { Link } from '@tanstack/react-router';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import type { TimeseriesPoint } from '@traks/shared';
 import { api } from '@/lib/api';
 import { SiteTileStats } from './SiteTileStats';
 import { SiteFavicon } from './SiteFavicon';
+import { SITE_RANGE_NAMES, type SiteRange } from './SiteRangeMenu';
 
 export interface TileColor {
-  /** Deep companion: icon, sparkline stroke, arrow. */
+  /** Deep companion: icon, chart bars, arrow. */
   deep: string;
-  /** Pastel: sparkline fill, icon-chip wash. */
+  /** Pastel: empty-bucket stubs, icon-chip wash. */
   pastel: string;
 }
 
-/** Today's hourly visitors sparkline; last point gets an anchored endpoint dot. */
-function Sparkline({
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Bucket key ('YYYY-MM-DD' or 'YYYY-MM-DDTHH', site timezone) as a short label. */
+function bucketLabel(key: string): string {
+  const [day, hour] = key.split('T');
+  if (hour !== undefined) return `${hour}:00`;
+  const [, m, d] = day.split('-');
+  return `${MONTHS[Number(m) - 1] ?? m} ${Number(d)}`;
+}
+
+/** Visitors per bucket (hours for today, days otherwise), scaled from zero.
+ *  The last bucket is still filling, so it is drawn lighter. */
+function VisitorBars({
   points,
   color,
 }: {
   points: TimeseriesPoint[];
   color: TileColor;
 }): ReactElement {
-  if (points.length < 2) return <div className="mt-3.5 h-11 w-full" aria-hidden="true" />;
+  if (points.length === 0) return <div className="mt-3.5 h-11 w-full" aria-hidden="true" />;
   const w = 280;
   const h = 44;
-  const values = points.map(p => p.visitors);
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const pad = (max - min) * 0.2 || 1;
-  const sx = (i: number): number => 4 + (i * (w - 8)) / (values.length - 1);
-  const sy = (v: number): number => 4 + (h - 10) * (1 - (v - min + pad) / (max - min + 2 * pad));
-  const line = values.map((v, i) => `${sx(i)},${sy(v)}`).join(' L ');
-  const gid = `spark-${color.deep.slice(1)}`;
-  const lastI = values.length - 1;
+  const max = Math.max(1, ...points.map(p => p.visitors));
+  const slot = w / points.length;
+  const gap = Math.min(4, slot * 0.3);
+  const lastI = points.length - 1;
 
   return (
+    // aria-hidden: the numbers below carry the data; the <title>s are hover
+    // tooltips only and would otherwise flood the link's accessible name.
     <svg
       className="mt-3.5 block h-11 w-full"
       viewBox={`0 0 ${w} ${h}`}
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color.pastel} stopOpacity="0.35" />
-          <stop offset="100%" stopColor={color.pastel} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`M ${line} L ${sx(lastI)},${h} L ${sx(0)},${h} Z`} fill={`url(#${gid})`} />
-      <path
-        d={`M ${line}`}
-        fill="none"
-        stroke={color.deep}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle
-        cx={sx(lastI)}
-        cy={sy(values[lastI])}
-        r="3"
-        fill={color.deep}
-        stroke="#fff"
-        strokeWidth="1.5"
-      />
+      {points.map((p, i) => {
+        const x = i * slot + gap / 2;
+        const bh = p.visitors > 0 ? Math.max(2, (p.visitors / max) * h) : 1.5;
+        return (
+          <g key={p.date}>
+            <title>{`${bucketLabel(p.date)}: ${p.visitors} visitor${p.visitors === 1 ? '' : 's'}`}</title>
+            {/* Full-height hit area so thin bars still show their tooltip. */}
+            <rect x={i * slot} y={0} width={slot} height={h} fill="transparent" />
+            <rect
+              x={x}
+              y={h - bh}
+              width={slot - gap}
+              height={bh}
+              rx={Math.min(1.5, (slot - gap) / 2)}
+              fill={p.visitors > 0 ? color.deep : color.pastel}
+              opacity={i === lastI ? 0.45 : 1}
+            />
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -77,6 +83,8 @@ export function SiteTile({
   isStatsLoading,
   isNew,
   batchIndex,
+  range,
+  humanOnly,
 }: {
   site: { id: string; name: string; domain: string; favicon?: string | null };
   color: TileColor;
@@ -84,13 +92,16 @@ export function SiteTile({
   isStatsLoading: boolean;
   isNew: boolean;
   batchIndex: number;
+  range: SiteRange;
+  humanOnly: boolean;
 }): ReactElement {
-  // Today's hourly sparkline - matches the "Today" stats below it. 'today'
-  // is served live from the site's DO, so this stays cheap per tile.
+  // Bars cover the same window and visits as the numbers below them.
+  // 'today' is served live from the site's DO; longer ranges are cached scans.
   const { data: sparkData, isLoading: sparkLoading } = useQuery({
-    queryKey: ['site-analytics', site.id, 'spark', 'today'],
-    queryFn: () => api.getTimeseries(site.id, 'today'),
+    queryKey: ['site-analytics', site.id, 'spark', range, humanOnly],
+    queryFn: () => api.getTimeseries(site.id, range, humanOnly ? { human: '1' } : undefined),
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
   const sparkPoints = ((sparkData as any)?.data ?? []) as TimeseriesPoint[];
 
@@ -129,13 +140,13 @@ export function SiteTile({
             aria-hidden="true"
           />
         ) : (
-          <Sparkline points={sparkPoints} color={color} />
+          <VisitorBars points={sparkPoints} color={color} />
         )}
 
-        {/* Stats - today */}
+        {/* Stats for the chosen range */}
         <div className="mt-3.5">
           <span className="mb-2.5 block text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#9B9590]">
-            Today
+            {SITE_RANGE_NAMES[range]}
           </span>
           <SiteTileStats stats={stats} isLoading={isStatsLoading} />
         </div>

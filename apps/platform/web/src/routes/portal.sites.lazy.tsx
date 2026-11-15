@@ -10,6 +10,7 @@ import { useWorkspace } from '@/lib/workspace';
 import { SiteTile } from '@/components/sites/SiteTile';
 import { AddSiteWizard } from '@/components/sites/AddSiteWizard';
 import { SiteSortMenu, SITE_SORT_NAMES, type SiteSort } from '@/components/sites/SiteSortMenu';
+import { SiteRangeMenu, SITE_RANGE_NAMES, type SiteRange } from '@/components/sites/SiteRangeMenu';
 
 export const Route = createLazyFileRoute('/portal/sites')({
   component: SitesPage,
@@ -25,6 +26,7 @@ const PAGE_SIZE = 6;
 const MAX_BATCH_SITES = 100;
 const SORT_STORAGE_KEY = 'traks.sites.sort';
 const HUMAN_STORAGE_KEY = 'traks.sites.human';
+const RANGE_STORAGE_KEY = 'traks.sites.range';
 
 // Humans only is the default; only an explicit "off" is remembered.
 function storedHumanOnly(): boolean {
@@ -33,6 +35,16 @@ function storedHumanOnly(): boolean {
   } catch {
     return true;
   }
+}
+
+function storedRange(): SiteRange {
+  try {
+    const value = localStorage.getItem(RANGE_STORAGE_KEY);
+    if (value && Object.hasOwn(SITE_RANGE_NAMES, value)) return value as SiteRange;
+  } catch {
+    /* storage blocked */
+  }
+  return '30d';
 }
 
 function storedSort(): SiteSort {
@@ -56,6 +68,7 @@ function SitesPage(): ReactElement {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sort, setSort] = useState<SiteSort>(storedSort);
   const [humanOnly, setHumanOnly] = useState<boolean>(storedHumanOnly);
+  const [range, setRange] = useState<SiteRange>(storedRange);
 
   const {
     data: sitesData,
@@ -89,7 +102,7 @@ function SitesPage(): ReactElement {
     [filteredSites, sort]
   );
 
-  // Sorting by visitors needs today's stats for every matching site, not
+  // Sorting by visitors needs the range's stats for every matching site, not
   // just the visible page, so that sort fetches them all (up to the batch
   // cap); the other sorts keep fetching stats for the visible tiles only.
   const sortsByStats = sort === 'visitors';
@@ -108,8 +121,8 @@ function SitesPage(): ReactElement {
     isLoading: batchStatsLoading,
     isPlaceholderData,
   } = useQuery({
-    queryKey: ['stats', 'batch', 'today', statsSiteIdsKey, humanOnly],
-    queryFn: () => api.getBatchStats('today', statsSiteIds, humanOnly),
+    queryKey: ['stats', 'batch', range, statsSiteIdsKey, humanOnly],
+    queryFn: () => api.getBatchStats(range, statsSiteIds, humanOnly),
     enabled: statsSiteIds.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -155,6 +168,15 @@ function SitesPage(): ReactElement {
     }
   };
 
+  const handleRangeChange = (value: SiteRange): void => {
+    setRange(value);
+    try {
+      localStorage.setItem(RANGE_STORAGE_KEY, value);
+    } catch {
+      /* storage blocked: the choice lasts for this visit only */
+    }
+  };
+
   const handleSortChange = (value: SiteSort): void => {
     renderedIdsRef.current.clear();
     setSort(value);
@@ -170,6 +192,7 @@ function SitesPage(): ReactElement {
     void queryClient.invalidateQueries({ queryKey: ['workspaces'] });
     void queryClient.invalidateQueries({ queryKey: ['sites'] });
     void queryClient.invalidateQueries({ queryKey: ['stats', 'batch'] });
+    void queryClient.invalidateQueries({ queryKey: ['site-analytics'] });
   };
 
   return (
@@ -227,6 +250,9 @@ function SitesPage(): ReactElement {
               <UserCheck className="h-4 w-4" strokeWidth={1.8} />
               Humans only
             </button>
+          )}
+          {!isLoading && allSites.length > 0 && (
+            <SiteRangeMenu value={range} onChange={handleRangeChange} />
           )}
           {!isLoading && allSites.length > 1 && (
             <SiteSortMenu value={sort} onChange={handleSortChange} />
@@ -327,6 +353,8 @@ function SitesPage(): ReactElement {
                   isStatsLoading={batchStatsLoading}
                   isNew={isNew}
                   batchIndex={batchIndex}
+                  range={range}
+                  humanOnly={humanOnly}
                 />
               );
             })}

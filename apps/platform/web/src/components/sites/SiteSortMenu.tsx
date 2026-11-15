@@ -13,7 +13,7 @@ export type SiteSort = 'added' | 'name' | 'visitors';
 export const SITE_SORT_NAMES: Record<SiteSort, string> = {
   added: 'Date added',
   name: 'Name',
-  visitors: 'Visitors today',
+  visitors: 'Visitors',
 };
 
 const SITE_SORTS = Object.keys(SITE_SORT_NAMES) as SiteSort[];
