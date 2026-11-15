@@ -21,12 +21,15 @@ const TILE_COLORS = [
   { deep: '#6b8ead', pastel: '#b8cbd9' },
   { deep: '#e07a5f', pastel: '#f2b5a4' },
 ];
-const PAGE_SIZE = 6;
+// Tiles per page; multiples of 2 and 3 keep the grid's rows full.
+const PAGE_SIZES = [6, 12, 24, 48] as const;
+const DEFAULT_PAGE_SIZE = 6;
 // The batch stats endpoint caps a request at 100 sites.
 const MAX_BATCH_SITES = 100;
 const SORT_STORAGE_KEY = 'traks.sites.sort';
 const HUMAN_STORAGE_KEY = 'traks.sites.human';
 const RANGE_STORAGE_KEY = 'traks.sites.range';
+const PAGE_SIZE_STORAGE_KEY = 'traks.sites.pageSize';
 
 // Humans only is the default; only an explicit "off" is remembered.
 function storedHumanOnly(): boolean {
@@ -35,6 +38,16 @@ function storedHumanOnly(): boolean {
   } catch {
     return true;
   }
+}
+
+function storedPageSize(): number {
+  try {
+    const value = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
+    if ((PAGE_SIZES as readonly number[]).includes(value)) return value;
+  } catch {
+    /* storage blocked */
+  }
+  return DEFAULT_PAGE_SIZE;
 }
 
 function storedRange(): SiteRange {
@@ -65,7 +78,8 @@ function SitesPage(): ReactElement {
   const { current: workspace, isLoading: workspaceLoading } = useWorkspace();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [pageSize, setPageSize] = useState<number>(storedPageSize);
+  const [visibleCount, setVisibleCount] = useState(pageSize);
   const [sort, setSort] = useState<SiteSort>(storedSort);
   const [humanOnly, setHumanOnly] = useState<boolean>(storedHumanOnly);
   const [range, setRange] = useState<SiteRange>(storedRange);
@@ -155,7 +169,7 @@ function SitesPage(): ReactElement {
   const handleSearchChange = (value: string): void => {
     renderedIdsRef.current.clear();
     setSearch(value);
-    setVisibleCount(PAGE_SIZE);
+    setVisibleCount(pageSize);
   };
 
   const handleHumanOnlyChange = (on: boolean): void => {
@@ -163,6 +177,17 @@ function SitesPage(): ReactElement {
     try {
       if (on) localStorage.removeItem(HUMAN_STORAGE_KEY);
       else localStorage.setItem(HUMAN_STORAGE_KEY, '0');
+    } catch {
+      /* storage blocked: the choice lasts for this visit only */
+    }
+  };
+
+  const handlePageSizeChange = (value: number): void => {
+    renderedIdsRef.current.clear();
+    setPageSize(value);
+    setVisibleCount(value);
+    try {
+      localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(value));
     } catch {
       /* storage blocked: the choice lasts for this visit only */
     }
@@ -180,7 +205,7 @@ function SitesPage(): ReactElement {
   const handleSortChange = (value: SiteSort): void => {
     renderedIdsRef.current.clear();
     setSort(value);
-    setVisibleCount(PAGE_SIZE);
+    setVisibleCount(pageSize);
     try {
       localStorage.setItem(SORT_STORAGE_KEY, value);
     } catch {
@@ -343,7 +368,7 @@ function SitesPage(): ReactElement {
               const color = TILE_COLORS[i % TILE_COLORS.length];
               const isNew = !renderedIdsRef.current.has(site.id);
               renderedIdsRef.current.add(site.id);
-              const batchIndex = isNew ? i % PAGE_SIZE : 0;
+              const batchIndex = isNew ? i % pageSize : 0;
               return (
                 <SiteTile
                   key={site.id}
@@ -360,21 +385,47 @@ function SitesPage(): ReactElement {
             })}
           </div>
 
-          {/* Load more button */}
-          {hasMore && (
-            <div className="mt-8 text-center">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setVisibleCount(prev => prev + PAGE_SIZE);
-                  requestAnimationFrame(() => {
-                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-                  });
-                }}
-                className="text-[13px] px-8"
+          {/* Load more, and the page size once there are more sites than the
+              smallest page */}
+          {(hasMore || filteredSites.length > PAGE_SIZES[0]) && (
+            <div className="mt-8 flex flex-col items-center gap-4 sm:relative sm:min-h-10 sm:justify-center">
+              {hasMore && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setVisibleCount(prev => prev + pageSize);
+                    requestAnimationFrame(() => {
+                      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                    });
+                  }}
+                  className="text-[13px] px-8"
+                >
+                  Load more
+                </Button>
+              )}
+              <div
+                role="group"
+                aria-label="Sites per page"
+                className="flex items-center gap-1 text-[12.5px] text-[#9B9590] sm:absolute sm:right-0 sm:top-1/2 sm:-translate-y-1/2"
               >
-                Load more
-              </Button>
+                <span className="mr-1">Per page</span>
+                {PAGE_SIZES.map(size => (
+                  <button
+                    key={size}
+                    type="button"
+                    aria-pressed={pageSize === size}
+                    onClick={() => handlePageSizeChange(size)}
+                    className={cn(
+                      'h-7 min-w-7 rounded-full px-2 font-semibold transition-colors cursor-pointer',
+                      pageSize === size
+                        ? 'bg-[#3D3B4F] text-white'
+                        : 'text-[#3D3B4F] hover:bg-[#F2F1ED]'
+                    )}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </>
