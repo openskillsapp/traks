@@ -85,6 +85,10 @@ export function noteSiteView(
   const raw = query.period ?? 'today';
   if (!isPreset(raw)) return;
   const period: Period = raw;
+  // 'today' is served live by the DO, so a today-only view (the Sites page
+  // shows one 'today' tile per site) needs nothing warmed. Noting it kept
+  // every site's 7d/30d panels warm around the clock.
+  if (HOT.has(period)) return;
   const throttleKey = `${siteId}|${period}`;
   const now = Date.now();
   if ((lastNoted.get(throttleKey) ?? 0) > now - NOTE_THROTTLE_MS) return;
@@ -101,7 +105,7 @@ export function noteSiteView(
       } catch {
         /* KV read failure: start fresh */
       }
-      if (!HOT.has(period)) periods = [period, ...periods.filter(p => p !== period)].slice(0, 3);
+      periods = [period, ...periods.filter(p => p !== period)].slice(0, 3);
       const rec: WarmRecord = { periods, at: now };
       await env.R2SQL_CACHE.put(key, JSON.stringify(rec), {
         expirationTtl: Math.max(60, Math.round(hours * 3600)),

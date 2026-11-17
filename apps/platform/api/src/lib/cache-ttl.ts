@@ -10,7 +10,10 @@ export function cacheTtlSeconds(period: PeriodParam): number {
     case 'today':
       return 60;
     default:
-      return 900;
+      // An hour, not 15 min: multi-day windows barely move in an hour, and
+      // each bucket roll re-scans R2 SQL (10 MB billed minimum per query)
+      // and rewrites KV for every warmed panel.
+      return 3600;
   }
 }
 
